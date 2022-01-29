@@ -7,6 +7,11 @@
 const _data = require('./data');
 const helpers = require('./helpers');
 const config = require('./config');
+const _url = require('url');
+const dns = require('dns');
+const _performance = require('perf_hooks').performance;
+const util = require('util');
+const debug = util.debuglog('performance');
 
 // Define the handlers
 const handlers = {};
@@ -377,8 +382,6 @@ handlers._users.post = function (data, callback) {
     const password = typeof (data.payload.password) == 'string' && data.payload.password.trim().length > 0 ? data.payload.password.trim() : false;
     const tosAgreement = typeof (data.payload.tosAgreement) == 'boolean' && data.payload.tosAgreement ? data.payload.tosAgreement : false;
 
-    console.log(firstName, lastName, phone, password, tosAgreement)
-
     if (firstName && lastName && phone && password && tosAgreement) {
         // Make sure that the user doesn't already exist
         _data.read('users', phone, function (err, data) {
@@ -587,16 +590,26 @@ handlers._tokens = {};
 // Required data: phone, password
 // Optional data: none
 handlers._tokens.post = function (data, callback) {
+    _performance.mark('entered function');
+
     const phone = typeof (data.payload.phone) == 'string' && data.payload.phone.trim().length === 9 ? data.payload.phone.trim() : false;
     const password = typeof (data.payload.password) == 'string' && data.payload.password.trim().length > 0 ? data.payload.password.trim() : false;
+
+    _performance.mark('Inputs validated');
+
     if (phone && password) {
         // Lookup the user who matches that phone number
+        _performance.mark('Beginning user lookup');
         _data.read('users', phone, function (err, userData) {
+            _performance.mark('User lookup complete');
             if (!err && userData) {
                 // Hash the sent password, and compare it to the password stored in the user object
+                _performance.mark('Beginning password hashing');
                 const hashedPassword = helpers.hash(password);
+                _performance.mark('Password hashing complete');
                 if (hashedPassword === userData.hashedPassword) {
                     // If valid, create a new token with a random name. Set expiration date 1 hour in the future
+                    _performance.mark('Creating data for token');
                     const tokenId = helpers.createRandomString(20)
                     const expires = Date.now() + 1000 * 60 * 60;
                     const tokenObject = {
@@ -606,7 +619,24 @@ handlers._tokens.post = function (data, callback) {
                     };
 
                     // Store the token
+                    _performance.mark('Beginning storing token');
                     _data.create('tokens', tokenId, tokenObject, function (err) {
+                        _performance.mark('Storing token complete');
+
+                        // Gather all the measurements
+                        _performance.measure('Beginning to end', 'entered function', 'Storing token complete');
+                        _performance.measure('Validating user input', 'entered function', 'Inputs validated');
+                        _performance.measure('User lookup', 'Beginning user lookup', 'User lookup complete');
+                        _performance.measure('Password hashing', 'Beginning password hashing', 'Password hashing complete');
+                        _performance.measure('Token data creation', 'Creating data for token', 'Beginning storing token');
+                        _performance.measure('Token storing', 'Beginning storing token', 'Storing token complete');
+
+                        // Log out all the measurements
+                        const measurements = _performance.getEntriesByType('measure');
+                        measurements.forEach(function (measurement) {
+                            console.log('\x1b[33m%s\x1b[0m', measurement.name + ' ' + measurement.duration);
+                        })
+
                         if (!err) {
                             callback(200, tokenObject);
                         } else {
@@ -759,46 +789,58 @@ handlers._checks.post = function (data, callback) {
             if (!err && tokenData) {
                 const userPhone = tokenData.phone;
 
-                // Lookyp the user data
+                // Lookup the user data
                 _data.read('users', userPhone, function (err, userData) {
                     if (!err && userData) {
                         const userChecks = typeof (userData.checks) == 'object' && userData.checks instanceof Array ? userData.checks : [];
                         // Verify that the user has less than the number of max-checks-per-user
                         if (userChecks.length < config.maxChecks) {
-                            // Create a random id for the check
-                            const checkId = helpers.createRandomString(20);
+                            // Verify that the URL given has DNS entries (and therefore can resolve)
+                            const parseUrl = _url.parse(protocol + '://' + url, true);
+                            const hostName = typeof(parseUrl.hostname) == 'string' && parseUrl.hostname.length > 0 ? parseUrl.hostname : false;
 
-                            // Create the check object, and include the user's phone
-                            const checkObject = {
-                                'id': checkId,
-                                'userPhone': userPhone,
-                                'protocol': protocol,
-                                'url': url,
-                                'method': method,
-                                'successCodes': successCodes,
-                                'timeoutSeconds': timeoutSeconds
-                            }
+                            // Use DNS
+                            dns.resolve(hostName, function (err, records) {
+                                if(!err && records) {
+                                    // Create a random id for the check
+                                    const checkId = helpers.createRandomString(20);
 
-                            // Save the object
-                            _data.create('checks', checkId, checkObject, function (err) {
-                                if (!err) {
-                                    // Add the check id to the user's object
-                                    userData.checks = userChecks;
-                                    userData.checks.push(checkId);
+                                    // Create the check object, and include the user's phone
+                                    const checkObject = {
+                                        'id': checkId,
+                                        'userPhone': userPhone,
+                                        'protocol': protocol,
+                                        'url': url,
+                                        'method': method,
+                                        'successCodes': successCodes,
+                                        'timeoutSeconds': timeoutSeconds
+                                    }
 
-                                    // Save the new user data
-                                    _data.update('users', userPhone, userData, function (err) {
+                                    // Save the object
+                                    _data.create('checks', checkId, checkObject, function (err) {
                                         if (!err) {
-                                            // Return the data about the new check
-                                            callback(200, checkObject);
+                                            // Add the check id to the user's object
+                                            userData.checks = userChecks;
+                                            userData.checks.push(checkId);
+
+                                            // Save the new user data
+                                            _data.update('users', userPhone, userData, function (err) {
+                                                if (!err) {
+                                                    // Return the data about the new check
+                                                    callback(200, checkObject);
+                                                } else {
+                                                    callback(500, {'Error': 'Could not update the user with the new check'});
+                                                }
+                                            })
                                         } else {
-                                            callback(500, {'Error': 'Could not update the user with the new check'});
+                                            callback(500, {'Error': 'Could not create the new check'})
                                         }
                                     })
                                 } else {
-                                    callback(500, {'Error': 'Could not create the new check'})
+                                    callback(400, {'Error': 'The hostname of the URL entered did not resolve to any DNS entries'})
                                 }
-                            })
+                            });
+
                         } else {
                             callback(400, {'Error': 'The user already has the maximum number of checks (' + config.maxChecks + ')'})
                         }

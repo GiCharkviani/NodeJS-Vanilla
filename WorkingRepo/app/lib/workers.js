@@ -170,7 +170,7 @@ workers.processCheckOutcome = function (originalCheckData, checkOutcome) {
             if (alertWarranted) {
                 workers.alertUserToStatusChange(newCheckData);
             } else {
-                console.log("Check outcome has not changed, no alert needed")
+                // console.log("Check outcome has not changed, no alert needed")
             }
         } else {
             console.log('Error: Truing to save updates to one of the checks')
@@ -210,7 +210,7 @@ workers.log = function (originalCheckData, checkOutcome, state, alertWarranted, 
     // Append the log string to the file
     _logs.append(logFileName, logString, function (err) {
         if (!err) {
-            console.log('Logging to file succeeded')
+            // console.log('Logging to file succeeded')
         } else {
             console.log('Logging to file failed')
         }
@@ -238,7 +238,7 @@ workers.rotateLogs = function () {
                         // Truncate the log
                         _logs.truncate(logId, function (err) {
                             if(!err) {
-                                console.log('Success truncating logFile');
+                                // console.log('Success truncating logFile');
                             } else {
                                 console.log('Error: truncating logFile');
                             }
